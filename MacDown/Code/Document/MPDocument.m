@@ -227,6 +227,11 @@ typedef NS_ENUM(NSUInteger, MPWordCountType) {
 // Store file content in initializer until nib is loaded.
 @property (copy) NSString *loadedString;
 
+// YES when the current document is a Mermaid script file (.mmd/.mermaid). Such
+// files contain raw Mermaid diagram source rather than Markdown, so their
+// contents are wrapped in a fenced ```mermaid block before rendering.
+@property (nonatomic, readonly) BOOL isMermaidDocument;
+
 - (void)scaleWebview;
 - (void)syncScrollers;
 -(void) updateHeaderLocations;
@@ -515,7 +520,7 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 
 + (NSArray *)writableTypes
 {
-    return @[@"net.daringfireball.markdown"];
+    return @[@"net.daringfireball.markdown", @"org.mermaidjs.diagram"];
 }
 
 - (BOOL)isDocumentEdited
@@ -981,9 +986,23 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 	return self.preview.loading;
 }
     
+- (BOOL)isMermaidDocument
+{
+    NSString *extension = self.fileURL.pathExtension.lowercaseString;
+    return [extension isEqualToString:@"mmd"]
+        || [extension isEqualToString:@"mermaid"];
+}
+
 - (NSString *)rendererMarkdown:(MPRenderer *)renderer
 {
-    return self.editor.string;
+    NSString *text = self.editor.string;
+
+    // A Mermaid script file is raw diagram source, not Markdown. Wrap it in a
+    // fenced ```mermaid block so the renderer (and mermaid.init.js) treat the
+    // whole file as a single diagram.
+    if (self.isMermaidDocument)
+        return [NSString stringWithFormat:@"```mermaid\n%@\n```\n", text];
+    return text;
 }
 
 - (NSString *)rendererHTMLTitle:(MPRenderer *)renderer
@@ -997,7 +1016,13 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 
 - (int)rendererExtensions:(MPRenderer *)renderer
 {
-    return self.preferences.extensionFlags;
+    int flags = self.preferences.extensionFlags;
+
+    // The Mermaid wrapper relies on fenced code blocks, so force the extension
+    // on for Mermaid documents regardless of the user's preference.
+    if (self.isMermaidDocument)
+        flags |= HOEDOWN_EXT_FENCED_CODE;
+    return flags;
 }
 
 - (BOOL)rendererHasSmartyPants:(MPRenderer *)renderer
@@ -1027,7 +1052,8 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
 
 - (BOOL)rendererHasMermaid:(MPRenderer *)renderer
 {
-    return self.preferences.htmlMermaid;
+    // Always render Mermaid for Mermaid documents; that is their whole point.
+    return self.preferences.htmlMermaid || self.isMermaidDocument;
 }
 
 - (BOOL)rendererHasGraphviz:(MPRenderer *)renderer
